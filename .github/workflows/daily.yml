@@ -1,0 +1,25 @@
+name: Daily Auto Sign
+
+on:
+  schedule:
+    # 定时任务使用 UTC 时间。北京时间 07:00 是 UTC 23:00 (前一天)。
+    # 我们设定在 UTC 22:58 启动（即北京时间 06:58），提前准备环境。
+    - cron: '58 22 * * *'
+  workflow_dispatch:
+
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run Script
+        env:
+          MY_COOKIE: ${{ secrets.MY_COOKIE }}
+        # 运行脚本
+        run: python sign.py
