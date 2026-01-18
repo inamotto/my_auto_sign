@@ -11,19 +11,18 @@ BASE_URL = "https://bbs.xudashi.cn/"
 SIGN_PAGE = BASE_URL + "qiandao.php"
 
 def wait_until_seven():
-    print(f"当前时间: {datetime.now().strftime('%H:%M:%S')}，进入等待模式...")
+    print(f"当前时间: {datetime.now().strftime('%H:%M:%S')}，进入高频蹲守模式...")
     while True:
         now = datetime.now()
-        # GitHub Actions 通常使用 UTC 时间，北京 07:00 = UTC 23:00
-        # 如果你的日志显示服务器时间就是北京时间，请将 23 改为 7
-        if now.hour == 23 and now.minute == 0:
-            # --- 新增随机延迟逻辑 ---
-            # 在 2.0 秒到 5.0 秒之间随机选择一个时间点
+        # GitHub 虚拟机通常是 UTC 时间，22:59:59 是北京时间 06:59:59
+        if now.hour == 22 and now.minute == 59 and now.second == 59:
+            # 随机延迟 2.0 到 5.0 秒，实现你要求的 07:00:02 ~ 07:00:05 签到
             delay = round(random.uniform(2.0, 5.0), 2)
-            print(f"--- 时间已到！模拟真人操作，随机等待 {delay} 秒后发起冲刺 ---")
+            print(f"目标时刻已到，随机等待 {delay} 秒...")
             time.sleep(delay)
             break
-        time.sleep(0.5)
+        # 每 0.1 秒检查一次，确保不会错过那一秒
+        time.sleep(0.1)
 
 def grab_sign():
     headers = {
