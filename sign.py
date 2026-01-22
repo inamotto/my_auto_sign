@@ -5,24 +5,32 @@ import time
 import random
 from datetime import datetime
 
-# 配置
 MY_COOKIE = os.environ.get('MY_COOKIE')
 BASE_URL = "https://bbs.xudashi.cn/"
 SIGN_PAGE = BASE_URL + "qiandao.php"
 
 def wait_until_seven():
-    print(f"当前时间: {datetime.now().strftime('%H:%M:%S')}，进入高频蹲守模式...")
+    print(f"脚本启动时间: {datetime.now().strftime('%H:%M:%S')}，开始逻辑判断...")
     while True:
         now = datetime.now()
-        # GitHub 虚拟机通常是 UTC 时间，22:59:59 是北京时间 06:59:59
-        if now.hour == 22 and now.minute == 59 and now.second == 59:
-            # 随机延迟 2.0 到 5.0 秒，实现你要求的 07:00:02 ~ 07:00:05 签到
-            delay = round(random.uniform(2.0, 5.0), 2)
-            print(f"目标时刻已到，随机等待 {delay} 秒...")
-            time.sleep(delay)
+        # 北京 07:00 对应 UTC 23:00
+        # 逻辑：如果是 06:45 到 06:59 之间启动的，就等
+        if now.hour == 22 and now.minute >= 45:
+            if now.minute == 59 and now.second == 59:
+                delay = round(random.uniform(2.0, 5.0), 2)
+                print(f"准点守候成功！随机延迟 {delay} 秒后抢签...")
+                time.sleep(delay)
+                break
+            time.sleep(0.1) # 高频对时
+        
+        # 逻辑：如果脚本启动时已经是 07:00 之后了（比如 07:16 延迟启动）
+        elif (now.hour == 23 and now.minute <= 30) or (now.hour == 22 and now.minute >= 59):
+            print("检测到时间已过或延迟启动，不再等待，立即补签！")
             break
-        # 每 0.1 秒检查一次，确保不会错过那一秒
-        time.sleep(0.1)
+            
+        else:
+            print("当前不在签到时间窗口，为防止超时被封，脚本直接退出。")
+            exit(0)
 
 def grab_sign():
     headers = {
@@ -30,33 +38,27 @@ def grab_sign():
         'Cookie': MY_COOKIE,
         'Referer': BASE_URL
     }
-
-    # 尝试多轮，增加成功率
-    for i in range(5): 
+    for i in range(5):
         try:
+            # 实时获取页面上的 sign 动态参数
             response = requests.get(SIGN_PAGE, headers=headers, timeout=10)
-            # 这里的正则关联了你之前检查出来的 href="qiandao.php?sign=xxxx"
             match = re.search(r'qiandao\.php\?sign=([a-z0-9]+)', response.text)
-            
             if match:
                 sign_url = BASE_URL + match.group(0)
-                print(f"第 {i+1} 次尝试，目标地址: {sign_url}")
-                
+                print(f"尝试请求: {sign_url}")
                 res = requests.get(sign_url, headers=headers, timeout=10)
                 if "已签到" in res.text or "成功" in res.text:
-                    print(f"【成功】抢签成功！触发时间: {datetime.now().strftime('%H:%M:%S')}")
+                    print(f"【成功】签到已完成！时间: {datetime.now().strftime('%H:%M:%S')}")
                     return
             else:
-                print(f"第 {i+1} 次尝试：尚未获取到签到 sign，服务器可能还在处理零点任务...")
-            
+                print(f"未找到 sign (第{i+1}次)，可能服务器未开启签到。")
         except Exception as e:
-            print(f"请求过程中出现异常: {e}")
-        
-        time.sleep(1.5) # 每轮之间稍作停顿
+            print(f"请求报错: {e}")
+        time.sleep(2)
 
 if __name__ == "__main__":
     if not MY_COOKIE:
-        print("错误：未在 GitHub Secrets 中找到 MY_COOKIE")
+        print("错误：未检测到 Cookie 变量")
     else:
         wait_until_seven()
         grab_sign()
