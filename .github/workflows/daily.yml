@@ -2,8 +2,8 @@ name: Daily Auto Sign
 
 on:
   schedule:
-    # 北京时间 06:45 触发 (对应 UTC 22:45)
-    - cron: '45 22 * * *'
+    # 北京时间 06:35 启动，确保 07:00 前一定能进入“高频刷新”状态
+    - cron: '35 22 * * *'
   workflow_dispatch:
 
 jobs:
