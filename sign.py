@@ -33,28 +33,31 @@ def single_shot(i):
     return False
 
 def wait_and_sprint():
-    print(f"脚本已启动，正在监听 07:00:00...")
+    print(f"脚本已启动，当前时间: {datetime.now().strftime('%H:%M:%S')}，正在监听 07:00:00...")
     
     while True:
         now = datetime.now()
-        # 北京 07:00 对应 UTC 23:00
-        if now.hour == 22 and now.minute == 59 and now.second == 59:
-            # 提前 100 毫秒左右进入爆发状态
-            time.sleep(0.8) 
-            print("--- [全火力爆发] 06:59:59.800，开始多线程并发刷新！ ---")
+        # 还没到 23:00 (北京 07:00)
+        if now.hour < 23:
+            if now.hour == 22 and now.minute == 59 and now.second == 59:
+                time.sleep(0.8) 
+                print("--- [准点爆发] ---")
+                break
+            time.sleep(0.5)
+        # 已经过了 23:00 (北京 07:00)
+        else:
+            print(f"检测到时间已过 ({now.strftime('%H:%M:%S')})，进入持续补签模式...")
             break
-        if now.hour == 23:
-            print("检测到时间已过，执行补签...")
-            break
-        time.sleep(0.1)
 
-    # 使用线程池并发发起 10 个请求，不再一个一个排队
+    # 关键修改：增加持续时间，即使迟到也要死磕到底
     with ThreadPoolExecutor(max_workers=10) as executor:
-        # 同时提交 30 个冲刺任务，谁快谁赢
-        for i in range(30):
+        # 将任务增加到 200 次，确保即使服务器反应慢，我们也能持续轰炸 20-30 秒
+        for i in range(200): 
             executor.submit(single_shot, i)
-            # 每次提交任务间隔极短，形成密集的请求雨
-            time.sleep(0.05) 
+            # 每次请求间隔稍微拉开一点，形成持续火力
+            time.sleep(0.2) 
+    
+    print("所有尝试已结束。")
 
 if __name__ == "__main__":
     if not MY_COOKIE:
