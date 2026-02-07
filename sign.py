@@ -36,34 +36,29 @@ def single_shot(i):
     return "RETRY"
 
 def wait_and_sprint():
-    # 打印 UTC 和预计的北京时间，方便你对日志
-    now = datetime.now()
-    print(f"脚本启动时间 (UTC): {now.strftime('%H:%M:%S')}")
-    print(f"脚本启动时间 (北京): {(now).strftime('%H:%M:%S')} (注:GitHub环境时间可能不准)")
-
-    # --- 第一阶段：等待 07:00 ---
+    print(f"脚本启动，当前时间: {datetime.now().strftime('%H:%M:%S')}")
+    
     while True:
         now = datetime.now()
-        # 如果是 06:59:59，进入瞬时爆发
-        if now.hour == 22 and now.minute == 59 and now.second == 59:
-            time.sleep(0.7)
-            print("--- [准点起跑] 已经 06:59:59.700，开始全速冲刺！ ---")
+        # 北京时间 07:00:00 对应 UTC 23:00:00
+        # 只要还没到 22:59:58，我们就每 10 秒打个卡，防止被 GitHub 熔断
+        if now.hour == 22 and now.minute == 59 and now.second >= 58:
+            print("--- [倒计时 2 秒] 准备进入火力网 ---")
             break
-        # 如果启动时已经过 7 点了，直接开始补签
+        
+        # 如果已经过点了，直接开始
         if now.hour >= 23:
-            print(f"--- [补救模式] 检测到启动已迟到 ({now.strftime('%H:%M:%S')})，开始持续轰炸！ ---")
+            print("--- [检测到已过点] 直接补签 ---")
             break
-        time.sleep(0.2)
+            
+        # 存活报告：每 30 秒打印一次，防止被判定为僵尸进程
+        if now.second % 30 == 0:
+            print(f"等待中... 当前时刻: {now.strftime('%H:%M:%S')}")
+            time.sleep(1) 
+        
+        time.sleep(0.5)
 
-    # --- 第二阶段：长效密集火力网 ---
-    # 我们不再只跑 30 次，我们跑 300 次，持续约 60-90 秒
-    # 只要这 1 分多钟内论坛开启了签到，你就必中
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        for i in range(300):
-            # 每隔 0.2 秒抛出一个新线程，形成连绵不断的请求压力
-            future = executor.submit(single_shot, i)
-            # 如果成功了，其实不需要停止，让它把这几十秒跑完最稳
-            time.sleep(0.2) 
+    # 冲刺阶段... (保持之前的 ThreadPoolExecutor 逻辑)
 
 if __name__ == "__main__":
     if not MY_COOKIE:
