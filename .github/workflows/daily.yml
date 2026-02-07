@@ -8,6 +8,12 @@ on:
     - cron: '50 22 * * *' # 06:50
   workflow_dispatch:
 
+# --- 加在这里 ---
+concurrency:
+  group: sign-group
+  cancel-in-progress: true 
+# ---------------
+
 jobs:
   start:
     runs-on: ubuntu-latest
@@ -22,5 +28,4 @@ jobs:
       - name: Run Script
         env:
           MY_COOKIE: ${{ secrets.MY_COOKIE }}
-        # 运行脚本
         run: python sign.py
