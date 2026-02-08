@@ -1,34 +1,28 @@
 import os
 import re
+import sys
 import time
-from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone, timedelta
 
 import requests
 
-MY_COOKIE = os.environ.get("MY_COOKIE", "").strip()
-
 BASE_URL = "https://bbs.xudashi.cn/"
 SIGN_PAGE = BASE_URL + "qiandao.php"
+MY_COOKIE = (os.environ.get("MY_COOKIE") or "").strip()
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-SUCCESS_KWS = ("签到成功", "成功", "已签到", "签到完成")
-FAIL_KWS = ("权限", "失败", "请先登录", "登录", "验证码", "过于频繁", "Forbidden", "Cloudflare", "Access Denied")
-
-# 更宽松的 token 抓取：允许大写/下划线/百分号等
 SIGN_RE = re.compile(r'qiandao\.php\?[^"\']*sign=([A-Za-z0-9_%-]+)', re.I)
+FORMHASH_RE = re.compile(r'name="formhash"\s+value="([a-z0-9]+)"', re.I)
 
-def now_utc_str():
-    return datetime.now(timezone.utc).strftime("%H:%M:%S.%f")
+SUCCESS_KWS = ("签到成功", "成功", "已签到", "今日已签到")
+LOGIN_KWS = ("请先登录", "登录")
 
-def build_session():
-    s = requests.Session()
-    # 连接池更稳一点
-    adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=0)
-    s.mount("http://", adapter)
-    s.mount("https://", adapter)
-    return s
+def now_utc():
+    return datetime.now(timezone.utc)
+
+def fmt(dt):
+    return dt.strftime("%H:%M:%S.%f")
 
 def headers():
     return {
@@ -40,120 +34,126 @@ def headers():
         "Connection": "keep-alive",
     }
 
-def single_shot(i: int) -> str:
-    s = build_session()
-    h = headers()
+def get(session, url):
+    return session.get(url, headers=headers(), timeout=10, allow_redirects=True)
 
-    try:
-        # 1) 访问签到页拿 token
-        resp = s.get(SIGN_PAGE, headers=h, timeout=8, allow_redirects=True)
-        code = resp.status_code
-        final_url = resp.url
+def post(session, url, data):
+    h = headers().copy()
+    h["Content-Type"] = "application/x-www-form-urlencoded"
+    return session.post(url, headers=h, data=data, timeout=10, allow_redirects=True)
 
-        # 关键诊断：偶尔打印一下即可（避免日志爆炸）
-        if i in (0, 1, 2, 10, 50, 100):
-            print(f"[{now_utc_str()}] [{i}] SIGN_PAGE status={code} url={final_url}")
+def beijing_target_0700_utc_dt():
+    # 北京时间 = UTC+8；07:00 北京 = 23:00 UTC（前一天）
+    # 这里以“当前 UTC 日期”为基准算出最近的目标 23:00:00
+    now = now_utc()
+    # 目标小时=23:00:00 UTC
+    target = now.replace(hour=23, minute=0, second=0, microsecond=0)
+    # 如果现在已经过了 23:00 UTC，就表示今天的 07:00 已过，目标不再等待
+    return target
 
-        text = resp.text or ""
+def wait_until_0700_beijing_strict():
+    """
+    严格保证：07:00（北京时间）之前不发签到请求。
+    仅等待+心跳日志。
+    """
+    target = beijing_target_0700_utc_dt()
+    now = now_utc()
 
-        # 简单判断登录态（这只是提示，不是绝对）
-        if ("登录" in text or "请先登录" in text) and ("qiandao" not in text):
-            return "COOKIE_ERROR"
+    print(f"[INFO] start utc={fmt(now)} cookie_len={len(MY_COOKIE)}")
+    print(f"[INFO] target(UTC)={fmt(target)}  (== 北京 07:00)")
 
-        # 如果页面本身就提示已签到
-        if any(k in text for k in SUCCESS_KWS):
-            print(f"[{now_utc_str()}] [{i}] ★ 已经处于已签到状态（在签到页检测到）")
-            return "ALREADY"
+    if now >= target:
+        print(f"[INFO] already past target utc={fmt(now)} -> no wait")
+        return
 
-        m = SIGN_RE.search(text)
-        if not m:
-            # 打印一小段与 qiandao/sign 相关的上下文，便于你判断页面结构是否变了/被拦
-            idx = text.lower().find("qiandao")
-            snippet = text[idx:idx+400] if idx != -1 else text[:400]
-            print(f"[{now_utc_str()}] [{i}] NO_TOKEN. status={code}. snippet={snippet!r}")
-            # 常见被拦：403/503
-            if code in (403, 429, 503):
-                return "BLOCKED"
-            return "NO_TOKEN"
-
-        sign_token = m.group(1)
-        sign_url = f"{SIGN_PAGE}?sign={sign_token}"
-
-        # 2) 发起签到请求
-        res = s.get(sign_url, headers=h, timeout=8, allow_redirects=True)
-        rcode = res.status_code
-        rtext = res.text or ""
-
-        if any(k in rtext for k in SUCCESS_KWS):
-            print(f"[{now_utc_str()}] [{i}] ★★★ 签到命中！ status={rcode} ★★★")
-            return "SUCCESS"
-
-        # 如果疑似失败原因，挑一个打印出来
-        hit_fail = next((k for k in FAIL_KWS if k in rtext), None)
-        if i in (0, 1, 2, 10, 50, 100) or hit_fail:
-            print(f"[{now_utc_str()}] [{i}] SIGN_RES status={rcode} hit_fail={hit_fail} head={rtext[:200]!r}")
-
-        if rcode in (403, 429, 503):
-            return "BLOCKED"
-
-        return "RETRY"
-
-    except Exception as e:
-        # 不要吞异常
-        print(f"[{now_utc_str()}] [{i}] EXCEPTION: {type(e).__name__}: {e}")
-        return "EXCEPTION"
-
-
-def wait_until_target():
-    # 你原来的目标：UTC 22:59:58 进入冲刺（= 北京 06:59:58）
-    print(f"脚本启动，当前时间(UTC): {now_utc_str()}")
     while True:
-        now = datetime.now(timezone.utc)
-        if now.hour == 22 and now.minute == 59 and now.second >= 58:
-            print(f"--- [到点: {now_utc_str()}] 进入冲刺 ---")
-            return
-        if now.hour >= 23:
-            print(f"--- [已过点: {now_utc_str()}] 直接补签冲刺 ---")
+        now = now_utc()
+        if now >= target:
+            print(f"[INFO] reached target utc={fmt(now)} -> start requests")
             return
 
-        # 存活报告：每 30 秒
-        if now.second % 30 == 0:
-            print(f"等待中... 当前(UTC): {now_utc_str()}")
+        # 心跳：每 20 秒一次
+        if now.second % 20 == 0:
+            remain = (target - now).total_seconds()
+            print(f"[WAIT] utc={fmt(now)} remain={remain:.1f}s")
             time.sleep(1)
-        time.sleep(0.3)
 
+        time.sleep(0.2)
+
+def try_checkin(session):
+    """
+    单次尝试：先访问签到页判断已签到/登录态，再走 GET sign 或 POST formhash
+    """
+    r = get(session, SIGN_PAGE)
+    print(f"[HTTP] SIGN_PAGE {r.status_code} {r.url}")
+    text = r.text or ""
+
+    if any(k in text for k in LOGIN_KWS):
+        return "COOKIE_ERROR", "login keywords detected"
+
+    if "今日已签到" in text or "已签到" in text:
+        return "ALREADY", "already signed"
+
+    m = SIGN_RE.search(text)
+    if m:
+        sign_url = SIGN_PAGE + "?sign=" + m.group(1)
+        rr = get(session, sign_url)
+        print(f"[HTTP] SIGN_GET  {rr.status_code} {rr.url}")
+        body = rr.text or ""
+        if any(k in body for k in SUCCESS_KWS):
+            return "OK", "GET sign success"
+        return "FAIL", f"GET not success head={body[:200]!r}"
+
+    fm = FORMHASH_RE.search(text)
+    if fm:
+        data = {
+            "formhash": fm.group(1),
+            "qdmode": "1",
+            "todaysay": "",
+            "fastreply": "0",
+        }
+        rr = post(session, SIGN_PAGE, data)
+        print(f"[HTTP] SIGN_POST {rr.status_code} {rr.url}")
+        body = rr.text or ""
+        if any(k in body for k in SUCCESS_KWS):
+            return "OK", "POST formhash success"
+        return "FAIL", f"POST not success head={body[:200]!r}"
+
+    # 说明按钮可能是 XHR/JS
+    return "FAIL", "no sign link / no formhash (maybe XHR/JS button)"
+
+def phase(session, label, attempts, interval):
+    print(f"[PHASE] {label} utc={fmt(now_utc())} attempts={attempts} interval={interval}s")
+    for i in range(1, attempts + 1):
+        status, detail = try_checkin(session)
+        print(f"[RESULT] {label} #{i} status={status} detail={detail}")
+        if status in ("OK", "ALREADY"):
+            print(f"[DONE] {status} utc={fmt(now_utc())}")
+            return 0
+        if status == "COOKIE_ERROR":
+            return 3
+        time.sleep(interval)
+    return 1
 
 def main():
     if not MY_COOKIE:
-        print("错误：未设置环境变量 MY_COOKIE")
-        return
+        print("[FATAL] MY_COOKIE 未设置")
+        return 2
 
-    wait_until_target()
+    # 严格：07:00 之前不发请求
+    wait_until_0700_beijing_strict()
 
-    # 冲刺参数：不要太夸张，否则容易触发频控/封禁
-    total = 200
-    max_workers = 12
-    interval = 0.08
+    s = requests.Session()
 
-    print(f"开始并发冲刺：total={total}, workers={max_workers}, interval={interval}s")
+    # 主签窗口：短间隔（例如 10 次，0.8s），总计约 8 秒
+    rc = phase(s, "MAIN", attempts=10, interval=0.8)
+    if rc in (0, 3):
+        return rc
 
-    stats = {}
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = []
-        for i in range(total):
-            futures.append(ex.submit(single_shot, i))
-            time.sleep(interval)
-
-        for f in as_completed(futures):
-            r = f.result()
-            stats[r] = stats.get(r, 0) + 1
-
-    print(f"冲刺结束(UTC): {now_utc_str()} 结果统计: {stats}")
-
-    # 让 workflow 用退出码体现失败（可选）
-    if stats.get("SUCCESS", 0) == 0 and stats.get("ALREADY", 0) == 0:
-        raise SystemExit(2)
-
+    # 补签窗口：低频（例如 12 次，每 25 秒一次），总计约 5 分钟
+    # 注意：你也可以把补签放到 workflow 的 07:05/07:15/07:30 run 去做
+    rc2 = phase(s, "MAKEUP", attempts=12, interval=25)
+    return rc2
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
