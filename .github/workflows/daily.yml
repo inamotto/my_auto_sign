@@ -2,30 +2,37 @@ name: Daily Auto Sign
 
 on:
   schedule:
-    # 就像设闹钟，多设几个防止睡死
-    - cron: '20 22 * * *' # 06:20
-    - cron: '35 22 * * *' # 06:35
-    - cron: '50 22 * * *' # 06:50
+    - cron: '10 22 * * *'
+    - cron: '20 22 * * *'
+    - cron: '30 22 * * *'
+    - cron: '40 22 * * *'
+    - cron: '50 22 * * *'
   workflow_dispatch:
 
-# --- 加在这里 ---
-concurrency:
-  group: sign-group
-  cancel-in-progress: true 
-# ---------------
+# 干脆移除 concurrency（或至少不要 cancel）
+# concurrency:
+#   group: sign-group
+#   cancel-in-progress: false
 
 jobs:
   start:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
+
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          pip install --upgrade pip
+          pip install requests
+
       - name: Run Script
         env:
           MY_COOKIE: ${{ secrets.MY_COOKIE }}
-        run: python sign.py
+        run: |
+          python -u sign.py
