@@ -12,9 +12,7 @@ SIGN_PAGE = BASE_URL + "qiandao.php"
 MY_COOKIE = (os.environ.get("MY_COOKIE") or "").strip()
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-# 你抓到的真实请求就是 qiandao.php?sign=xxxx
 SIGN_RE = re.compile(r'qiandao\.php\?sign=([A-Za-z0-9]+)', re.I)
-
 SUCCESS_KWS = ("签到成功", "成功", "今日已签到", "已签到")
 LOGIN_KWS = ("请先登录", "登录")
 
@@ -40,7 +38,7 @@ def get(session: requests.Session, url: str):
 def wait_until_beijing_0700_strict():
     """
     北京时间 07:00:00 == UTC 23:00:00（前一天）
-    严格：07:00 前不访问签到页、不请求 sign。
+    严格：07:00 前不访问签到页。
     """
     now = utc_now()
     target = now.replace(hour=23, minute=0, second=0, microsecond=0)
@@ -64,9 +62,6 @@ def wait_until_beijing_0700_strict():
         time.sleep(0.2)
 
 def try_once(session: requests.Session):
-    """
-    单次尝试：GET qiandao.php -> 抓 sign -> GET qiandao.php?sign=xxx
-    """
     r = get(session, SIGN_PAGE)
     print(f"[HTTP] SIGN_PAGE {r.status_code} {r.url}")
     text = r.text or ""
@@ -79,7 +74,6 @@ def try_once(session: requests.Session):
 
     m = SIGN_RE.search(text)
     if not m:
-        # 给一点片段用于判断页面是否变了/被拦
         snippet = text[:300].replace("\n", " ") if text else ""
         return "NO_SIGN", f"no sign found. head={snippet!r}"
 
@@ -114,17 +108,17 @@ def main():
         print("[FATAL] MY_COOKIE 未设置")
         return 2
 
-    # 07:00 前不做任何请求
+    # 07:00 前不请求
     wait_until_beijing_0700_strict()
 
     s = requests.Session()
 
-    # 主窗口：短间隔尝试（例如 10 次，每 0.8 秒一次，总共约 8 秒）
+    # 主签到窗口：约 8 秒
     rc = phase(s, "MAIN", attempts=10, interval=0.8)
     if rc in (0, 3):
         return rc
 
-    # 补签：低频尝试（例如 12 次，每 25 秒一次，约 5 分钟）
+    # 补签：约 5 分钟
     rc2 = phase(s, "MAKEUP", attempts=12, interval=25)
     return rc2
 
